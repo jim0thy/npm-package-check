@@ -1,16 +1,26 @@
 import fetch from 'npm-registry-fetch';
 import fs from 'fs';
 import path from 'path';
-import { Presets, SingleBar } from 'cli-progress';
+import cliProgress from 'cli-progress';
 
-// Ensure the orgName is provided as a command-line argument
+/**
+ * Represents the name of an organization.
+ *
+ * @param {string} orgName - The name of the organization.
+ * @returns {void}
+ */
 const orgName = process.argv[2];
 if (!orgName) {
   console.error('Please provide the organization name as a command-line argument.');
   process.exit(1);
 }
 
-// Function to get npm token from ~/.npmrc
+/**
+ * Retrieves the npm authentication token from the npm configuration file.
+ * The npm configuration file should be located at ~/.npmrc.
+ *
+ * @returns {string | null} - The npm authentication token if found, otherwise null.
+ */
 const getNpmToken = (): string | null => {
   try {
     const npmrcPath = path.resolve(process.env.HOME || process.env.USERPROFILE || '', '.npmrc');
@@ -23,12 +33,25 @@ const getNpmToken = (): string | null => {
   }
 };
 
+/**
+ * Retrieves the npm token used for authenticating with the npm registry.
+ *
+ * @returns {string} The npm token.
+ */
 const npmToken = getNpmToken();
 if (!npmToken) {
   console.error('Failed to retrieve npm token from ~/.npmrc');
   process.exit(1);
 }
 
+/**
+ * Object representing the fetch options.
+ *
+ * @typedef {Object} FetchOptions
+ * @property {Object} headers - The headers of the HTTP request.
+ * @property {string} headers.Authorization - The authorization token.
+ * @property {string} registry - The URL of the npm registry.
+ */
 const fetchOpts = {
   headers: {
     Authorization: `Bearer ${npmToken}`
@@ -36,17 +59,31 @@ const fetchOpts = {
   registry: 'https://registry.npmjs.org/'
 };
 
+/**
+ * Represents information about the size of a package.
+ * @interface
+ */
 interface PackageSizeInfo {
   name: string;
   size: string;
+  rawSize: number;
 }
 
-// Type guard to check if an error is an instance of Error
+/**
+ * Determines whether the given value is an instance of the Error class.
+ *
+ * @param {unknown} error - The value to be checked.
+ * @returns {boolean} - true if the value is an instance of the Error class, otherwise false.
+ */
 const isError = (error: unknown): error is Error => {
   return error instanceof Error;
 };
 
-// Function to format bytes as a human-readable string
+/**
+ * Function to format bytes to human-readable format.
+ * @param {number} bytes - The number of bytes to be formatted.
+ * @returns {string} - The formatted bytes.
+ */
 const formatBytes = (bytes: number): string => {
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
   if (bytes === 0) return '0 Byte';
@@ -54,6 +91,12 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
 };
 
+/**
+ * Retrieves the size information of a given package from the NPM registry.
+ *
+ * @param {string} packageName - The name of the package.
+ * @returns {Promise<PackageSizeInfo | null>} - The package size information, or null if the package is not found or an error occurred.
+ */
 const getPackageSize = async (packageName: string): Promise<PackageSizeInfo | null> => {
   try {
     const encodedPackageName = encodeURIComponent(packageName);
@@ -73,7 +116,8 @@ const getPackageSize = async (packageName: string): Promise<PackageSizeInfo | nu
 
     return {
       name: packageName,
-      size: formatBytes(size)
+      size: formatBytes(size),
+      rawSize: size
     };
   } catch (error) {
     if (isError(error)) {
@@ -89,6 +133,21 @@ const getPackageSize = async (packageName: string): Promise<PackageSizeInfo | nu
   }
 };
 
+/**
+ * Retrieves a list of packages for a given organization from the npm registry.
+ *
+ * @param {string} org - The name of the organization.
+ * @returns {Promise<string[]>} - A promise that resolves with an array of package names.
+ * @throws {Error} - If the response format is unexpected.
+ *
+ * Examples:
+ *
+ *  listOrgPackages('my-org').then(packages => {
+ *    console.log(packages); // ['package1', 'package2', 'package3']
+ *  }).catch(error => {
+ *    console.error(error.message);
+ *  });
+ */
 const listOrgPackages = async (org: string): Promise<string[]> => {
   try {
     const orgPackagesUrl = `https://registry.npmjs.org/-/org/${org}/package`;
@@ -108,22 +167,48 @@ const listOrgPackages = async (org: string): Promise<string[]> => {
   }
 };
 
+/**
+ * Writes the given data to a CSV file at the specified file path.
+ *
+ * @param {string} filePath - The path to the CSV file.
+ * @param {PackageSizeInfo[]} data - An array of objects representing the package size information.
+ * @throws {Error} If there is an error writing the CSV file.
+ */
+const writeCSV = (filePath: string, data: PackageSizeInfo[]) => {
+  const header = 'Package Name,Size (Bytes),Size (Pretty)\n';
+  const rows = data.map(pkg => `${pkg.name},${pkg.rawSize},${pkg.size}`).join('\n');
+  fs.writeFileSync(filePath, header + rows);
+};
+
+/**
+ * Executes the main function.
+ *
+ * This function retrieves a list of packages for an organization,
+ * fetches the size of each package, sorts the packages by size,
+ * and outputs the results to both a CSV file and the console.
+ * If an error occurs during processing, it will be caught and logged.
+ *
+ * @returns {Promise<void>}
+ */
 const main = async () => {
   try {
     const packages = await listOrgPackages(orgName);
-    const bar = new SingleBar({ clearOnComplete: true }, Presets.shades_classic);
+    const bar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
     bar.start(packages.length, 0);
 
     const packageSizesPromises = packages.map(pkg => getPackageSize(pkg).finally(() => bar.increment()));
     const packageSizesResults = await Promise.all(packageSizesPromises);
-    bar.stop()
-
+    bar.stop();
 
     const packageSizes: PackageSizeInfo[] = packageSizesResults.filter(
       (sizeInfo): sizeInfo is PackageSizeInfo => sizeInfo !== null
     );
 
-    console.table(packageSizes);
+    packageSizes.sort((a, b) => b.rawSize - a.rawSize);
+    const filePath = path.resolve(__dirname, 'package-sizes.csv');
+    writeCSV(filePath, packageSizes);
+    console.log('CSV file created: package-sizes.csv');
+    console.table(packageSizes.map(({ name, size, rawSize }) => ({ name, rawSize, size })));
   } catch (error) {
     if (isError(error)) {
       console.error('Error during processing:', error.message);
