@@ -12,15 +12,7 @@ Here is an outline on how to run the TypeScript script given, using \`ts-node\`.
 
 ## Installation Steps
 
-1. Install `ts-node` globally using npm:
-   ```
-   npm install -g typescript ts-node
-   ```
-2. Navigate to the directory containing your TypeScript file and install the required dependencies:
-   ```
-   cd /path/to/directory
-   npm install npm-registry-fetch fs path cli-progress
-   ```
+`npm install` will install all the dependencies required to run the script. This will install `ts-node`, `axios`, and `csv-writer` packages.
 
 ## Run the Script
 
